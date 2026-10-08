@@ -1,16 +1,21 @@
-## Hi there 👋
+# Hi, I'm Avinash 👋
 
-<!--
-**aviasokan/aviasokan** is a ✨ _special_ ✨ repository because its `README.md` (this file) appears on your GitHub profile.
+Founder of **Nash Enterprises** (*Creations by Nash*) and the creator behind **Arth** ([designedbyarth.com](https://designedbyarth.com)) — a design & development studio based in Coimbatore, India.
 
-Here are some ideas to get you started:
+## What I'm building
 
-- 🔭 I’m currently working on ...
-- 🌱 I’m currently learning ...
-- 👯 I’m looking to collaborate on ...
-- 🤔 I’m looking for help with ...
-- 💬 Ask me about ...
-- 📫 How to reach me: ...
-- 😄 Pronouns: ...
-- ⚡ Fun fact: ...
--->
+**[Tapqode](https://tapqode.designedbyarth.com)** — a QR code platform for web and Android, with INR + UPI support and no ads on scan pages for paid plans.
+
+**[Kitefolio](https://kitefolio.designedbyarth.com)** — a portfolio site from the Arth studio.
+
+**Arth** — websites and products designed and built end to end.
+
+## Tech I work with
+
+Next.js · React · TypeScript · Firebase · Expo / React Native · Vercel
+
+## Get in touch
+
+Web: [designedbyarth.com](https://designedbyarth.com)
+
+Email: hello@designedbyarth.com
