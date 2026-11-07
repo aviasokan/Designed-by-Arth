@@ -3,221 +3,311 @@
 <style>html,body{margin:0;background:#000}canvas{display:block}</style></head>
 <body><canvas id="c" width="1600" height="2000"></canvas>
 <script>
-// ---- Deterministic, seamlessly-looping animation: everything is a pure function of time t (0..T) ----
-const T = 10;                       // loop length in seconds
-const W = 1600, H = 2000;
+// Everything is a pure function of time t (seconds) so frames can be rendered deterministically.
+const T = 15, W = 1600, H = 2000, TAU = Math.PI * 2;
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
-const TAU = Math.PI * 2;
 function hash(n){ n = Math.sin(n * 127.1 + 311.7) * 43758.5453; return n - Math.floor(n); }
 const mod = (a, b) => ((a % b) + b) % b;
-const cyc = (t, n, ph = 0) => 0.5 + 0.5 * Math.sin(TAU * (n * t / T + ph));  // n whole cycles per loop -> seamless
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const ss = x => { x = clamp(x); return x * x * (3 - 2 * x); };
+const lerp = (a, b, k) => a + (b - a) * k;
+const cyc = (t, n, ph = 0) => 0.5 + 0.5 * Math.sin(TAU * (n * t / T + ph));
+const mix3 = (a, b, k) => [lerp(a[0], b[0], k), lerp(a[1], b[1], k), lerp(a[2], b[2], k)];
 
-let base, lights = [], ready = false;
-const glowCache = {};
-function glowSprite(r, g, b){
-  const k = r + ',' + g + ',' + b;
-  if (glowCache[k]) return glowCache[k];
+let base, lights = [];
+const cache = {};
+function sprite(col){
+  const r = Math.round(col[0]), g = Math.round(col[1]), b = Math.round(col[2]), k = r + ',' + g + ',' + b;
+  if (cache[k]) return cache[k];
   const c = document.createElement('canvas'); c.width = c.height = 64;
   const x = c.getContext('2d'), gr = x.createRadialGradient(32, 32, 0, 32, 32, 32);
-  gr.addColorStop(0, `rgba(255,255,255,1)`);
-  gr.addColorStop(0.12, `rgba(${r},${g},${b},0.95)`);
-  gr.addColorStop(0.4, `rgba(${r},${g},${b},0.25)`);
-  gr.addColorStop(1, `rgba(${r},${g},${b},0)`);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.12, `rgba(${r},${g},${b},0.95)`);
+  gr.addColorStop(0.4, `rgba(${r},${g},${b},0.25)`); gr.addColorStop(1, `rgba(${r},${g},${b},0)`);
   x.fillStyle = gr; x.fillRect(0, 0, 64, 64);
-  return glowCache[k] = c;
+  return cache[k] = c;
 }
 function glow(x, y, rad, a, col = [255, 190, 90]){
-  if (a <= 0.01) return;
+  if (a <= 0.01 || rad <= 0.5) return;
   ctx.globalAlpha = Math.min(1, a);
-  ctx.drawImage(glowSprite(...col), x - rad, y - rad, rad * 2, rad * 2);
+  ctx.drawImage(sprite(col), x - rad, y - rad, rad * 2, rad * 2);
 }
 function star4(x, y, s, a, col = '255,200,90'){
   if (a <= 0.01) return;
   ctx.save(); ctx.translate(x, y); ctx.globalAlpha = Math.min(1, a);
   const g = ctx.createRadialGradient(0, 0, 0, 0, 0, s);
   g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.25, `rgba(${col},0.9)`); g.addColorStop(1, `rgba(${col},0)`);
-  ctx.fillStyle = g;
-  ctx.beginPath();
+  ctx.fillStyle = g; ctx.beginPath();
   ctx.moveTo(0, -s); ctx.quadraticCurveTo(s * .06, -s * .06, s, 0); ctx.quadraticCurveTo(s * .06, s * .06, 0, s);
   ctx.quadraticCurveTo(-s * .06, s * .06, -s, 0); ctx.quadraticCurveTo(-s * .06, -s * .06, 0, -s); ctx.fill();
   ctx.restore();
 }
 
-// ---------------- scene elements ----------------
-// 1) twinkling string lights on the house (chasing wave + random flicker)
+// ============ 1. HOUSE LIGHTS: ignition wave, then chase -> alternate colours -> twinkle -> colour wave ============
+const GOLD = [255, 205, 110], ORANGE = [255, 140, 50], PINK = [255, 90, 160], WHITE = [255, 240, 215], ROSE = [255, 120, 110];
+const win = (t, a, b) => ss((t - a) / 0.5) * (1 - ss((t - b) / 0.5));
 function drawHouseLights(t){
+  const wC = win(2.6, 5.6, 0) * 0 + win(t, 2.6, 5.8), wB = win(t, 5.5, 8.6), wT = win(t, 8.3, 11.4), wR = win(t, 11.1, 99);
+  const ws = (wC + wB + wT + wR) || 1;
   lights.forEach(([x, y], i) => {
-    const wave = 0.5 + 0.5 * Math.sin(TAU * (2 * t / T) - (x + y * .3) * 0.012);       // chase along the roofline
-    const tw = cyc(t, 2 + Math.floor(hash(i) * 4), hash(i + 9));                          // individual twinkle
-    const a = 0.25 + 0.75 * (0.55 * wave + 0.45 * tw);
-    const warm = hash(i + 3) > .8 ? [255, 160, 60] : [255, 205, 110];
-    glow(x, y, 13 + 7 * a, a * 0.85, warm);
-    glow(x, y, 4 + 3 * a, a, [255, 245, 220]);
+    const ti = 0.5 + (x / W) * 1.7 + hash(i) * 0.2;                  // when this bulb switches on
+    const on = ss((t - ti) / 0.12);
+    const flash = Math.exp(-Math.pow((t - ti - 0.05) / 0.14, 2));       // ignition pop
+    const aC = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(TAU * (t * 0.9) - (x + y * .3) * 0.018));
+    const par = (i + Math.floor(t * 2.2)) % 3;                        // 3-colour marquee
+    const aB = par === 0 ? 1 : 0.18;
+    const aT = 0.15 + 0.85 * Math.pow(0.5 + 0.5 * Math.sin(TAU * (t * (0.8 + 1.6 * hash(i + 4)) + hash(i + 9))), 2);
+    const aR = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(TAU * (t * 1.6) + (x * 0.012)));
+    const a = (wC * aC + wB * aB + wT * aT + wR * aR) / ws;
+    const cB = [GOLD, ORANGE, PINK][(i + Math.floor(t * 2.2)) % 3];
+    const cR = mix3(mix3(GOLD, ROSE, ss(0.5 + 0.5 * Math.sin(TAU * t * 0.4 - x * 0.004))), PINK, ss(0.5 + 0.5 * Math.sin(TAU * t * 0.4 - x * 0.004 + 2)));
+    const col = [(wC * GOLD[0] + wB * cB[0] + wT * (hash(i + 3) > .8 ? ORANGE : GOLD)[0] + wR * cR[0]) / ws,
+                 (wC * GOLD[1] + wB * cB[1] + wT * (hash(i + 3) > .8 ? ORANGE : GOLD)[1] + wR * cR[1]) / ws,
+                 (wC * GOLD[2] + wB * cB[2] + wT * (hash(i + 3) > .8 ? ORANGE : GOLD)[2] + wR * cR[2]) / ws];
+    const A = a * on;
+    glow(x, y, 15 + 9 * A + 22 * flash, A * 0.9 + flash * .6, col);
+    glow(x, y, 4 + 3 * A, Math.min(1, A + flash), WHITE);
+    if (A > 0.75) glow(x, y, 34, (A - 0.75) * 0.5, col);               // bloom on the brightest bulbs
   });
+  // warm breathing glow over the whole house
+  const k = ss((t - 1.2) / 1.5);
+  const hw = glowWide(t);
+  ctx.globalAlpha = k * hw; ctx.fillStyle = 'rgb(255,150,60)';
+  const g = ctx.createRadialGradient(790, 980, 20, 790, 980, 700);
+  g.addColorStop(0, 'rgba(255,160,70,0.5)'); g.addColorStop(1, 'rgba(255,160,70,0)');
+  ctx.fillStyle = g; ctx.globalAlpha = k * hw; ctx.fillRect(0, 600, W, 700);
 }
+const glowWide = t => 0.10 + 0.07 * Math.sin(TAU * t * 0.5);
 
-// 2) sky fireworks (new bursts) + pulsing/sparkle on the baked-in ones
-const BURSTS = [
-  // x, y, radius, start(s), hue-colour, count
-  [205, 505, 150, 0.4, [255, 170, 60]],
-  [1425, 470, 160, 1.6, [200, 90, 255]],
-  [330, 300, 120, 3.2, [255, 90, 160]],
-  [1490, 330, 130, 4.4, [255, 190, 70]],
-  [150, 330, 115, 5.8, [120, 200, 255]],
-  [1360, 560, 120, 6.9, [255, 120, 90]],
-  [260, 560, 110, 8.0, [255, 220, 120]],
-  [1450, 140, 110, 9.0, [160, 255, 170]],
+// ============ 2. FIREWORKS: rocket launch -> burst (peony / ring / willow / double / crackle / heart) ============
+// [start(s), x, y, radius, type, colour1, colour2]
+const SHOWS = [
+  [2.2, 210, 470, 150, 'peony',   [255, 170, 60]],
+  [2.9, 1400, 430, 160, 'ring',   [200, 100, 255]],
+  [3.8, 300, 330, 115, 'willow',  [255, 200, 90]],
+  [4.6, 1480, 330, 125, 'peony',  [255, 90, 160]],
+  [5.5, 150, 540, 125, 'heart',   [255, 70, 110]],
+  [6.3, 1340, 540, 135, 'double', [255, 210, 80], [255, 70, 70]],
+  [7.2, 240, 420, 150, 'crackle', [255, 235, 170]],
+  [8.0, 1450, 470, 150, 'peony',  [110, 200, 255]],
+  [8.8, 130, 330, 115, 'ring',    [110, 255, 200]],
+  [9.5, 1330, 330, 125, 'willow', [255, 190, 80]],
+  [10.3, 250, 560, 135, 'double', [255, 120, 60], [255, 230, 120]],
+  [11.0, 1470, 600, 130, 'heart', [255, 80, 170]],
+  [11.8, 180, 430, 150, 'peony',  [190, 120, 255]],
+  [12.5, 1400, 420, 170, 'peony', [255, 180, 70]],
+  [12.9, 260, 480, 170, 'ring',   [255, 100, 100]],
+  [13.3, 1480, 320, 130, 'crackle', [255, 240, 180]],
+  [13.6, 140, 350, 130, 'peony',  [120, 255, 170]],
 ];
-const BDUR = 2.4;
-function drawBursts(t){
-  BURSTS.forEach(([cx, cy, R, st, col], bi) => {
-    const age = mod(t - st, T);
-    if (age > BDUR) return;
-    const u = age / BDUR;
-    const n = 70;
-    for (let i = 0; i < n; i++){
-      const ang = TAU * (i / n) + hash(bi * 100 + i) * .3;
-      const sp = R * (0.55 + 0.45 * hash(bi * 300 + i + 1));
-      const ease = 1 - Math.pow(1 - Math.min(1, u * 1.15), 3);
-      const gravity = 60 * u * u;
-      const x = cx + Math.cos(ang) * sp * ease, y = cy + Math.sin(ang) * sp * ease + gravity;
-      const fade = Math.max(0, 1 - Math.pow(u, 1.6));
-      const flick = 0.6 + 0.4 * Math.sin(age * 40 + i * 7);
-      // trail
-      const e2 = 1 - Math.pow(1 - Math.max(0, u * 1.15 - 0.07), 3);
-      const x2 = cx + Math.cos(ang) * sp * e2, y2 = cy + Math.sin(ang) * sp * e2 + 60 * Math.max(0, u - .03) ** 2;
-      ctx.globalAlpha = fade * 0.55; ctx.strokeStyle = `rgb(${col})`; ctx.lineWidth = 2.2;
-      ctx.beginPath(); ctx.moveTo(x2, y2); ctx.lineTo(x, y); ctx.stroke();
-      glow(x, y, 9, fade * flick, col);
-    }
-    // central flash
-    glow(cx, cy, 120 * Math.max(0, 1 - u * 5), Math.max(0, 1 - u * 5), col);
-  });
-}
-const FIREWORKS_BAKED = [[100, 115], [222, 165], [1430, 175], [1330, 245]];
-function drawBakedPulse(t){
-  FIREWORKS_BAKED.forEach(([x, y], i) => {
-    glow(x, y, 120 + 20 * cyc(t, 2, i * .25), 0.28 + 0.2 * cyc(t, 2, i * .25 + .5), i % 2 ? [190, 90, 255] : [255, 160, 50]);
-    for (let k = 0; k < 7; k++){
-      const ang = TAU * hash(i * 20 + k), r = 40 + 80 * hash(i * 31 + k);
-      const a = Math.pow(cyc(t, 3, hash(i * 7 + k)), 6);
-      glow(x + Math.cos(ang) * r, y + Math.sin(ang) * r, 14, a, [255, 220, 150]);
-    }
-  });
-}
-
-// 3) cold-fountain sparks (left & right)
-function drawFountain(t, bx, by){
-  const L = 1.0, n = 130;
-  for (let i = 0; i < n; i++){
-    const age = mod(t - (i / n) * L, L);          // 0..1 life
-    const h = hash(i * 3 + bx);
-    const vx = (hash(i * 5 + bx + 1) - .5) * 260, vy = 520 + 380 * h;
-    const x = bx + vx * age * 0.55, y = by - vy * age + 640 * age * age * 0.62;
-    const a = (1 - age) * (0.55 + 0.45 * Math.sin(age * 30 + i));
-    glow(x, y, 7 + 5 * (1 - age), a, [255, 215, 140]);
+const RK = 0.85;                                   // rocket flight time before the burst
+function showShape(type, i, n, bi){
+  const h = hash(bi * 100 + i), a = TAU * i / n + hash(bi * 7 + i) * 0.25;
+  if (type === 'ring') return i < n * 0.7 ? [Math.cos(a), Math.sin(a)] : [Math.cos(a) * .6, Math.sin(a) * .6];
+  if (type === 'double') { const s = i < n * 0.5 ? 0.5 : 1; return [Math.cos(a) * s, Math.sin(a) * s]; }
+  if (type === 'heart') {
+    const th = TAU * (i % (n / 2)) / (n / 2), sc = i < n / 2 ? 1 : 0.55;
+    return [16 * Math.pow(Math.sin(th), 3) / 17 * sc, -(13 * Math.cos(th) - 5 * Math.cos(2 * th) - 2 * Math.cos(3 * th) - Math.cos(4 * th)) / 17 * sc];
   }
-  glow(bx, by - 20, 60 + 10 * cyc(t, 20), 0.7, [255, 190, 90]);
-  glow(bx, by - 150, 90, 0.18 + 0.1 * cyc(t, 12), [255, 200, 110]);
+  const s = 0.5 + 0.5 * h; return [Math.cos(a) * s, Math.sin(a) * s];
+}
+let shake = [0, 0];
+function drawShows(t){
+  let sx = 0, sy = 0;
+  SHOWS.forEach(([st, cx, cy, R, type, c1, c2], bi) => {
+    // --- rocket
+    const rp = (t - (st - RK)) / RK;
+    if (rp > 0 && rp < 1.02){
+      const lx = cx + (hash(bi + 50) - .5) * 70, ly = Math.min(cy + 430, 1060);
+      const pos = p => { const e = 1 - Math.pow(1 - clamp(p), 2); return [lerp(lx, cx, e) + Math.sin(p * 22) * 7 * (1 - p), lerp(ly, cy, e)]; };
+      for (let k = 0; k < 16; k++){
+        const [x, y] = pos(rp - k * 0.03); const fa = (1 - k / 16);
+        glow(x + (hash(k + bi) - .5) * 6, y + k * 1.5, 7 + 4 * fa, fa * 0.8, [255, 190, 100]);
+      }
+      const [hx, hy] = pos(rp); glow(hx, hy, 18, 1, [255, 255, 235]);
+    }
+    // --- burst
+    const age = t - st, dur = type === 'willow' ? 3.4 : 2.6;
+    if (age < 0 || age > dur) return;
+    const u = age / dur, n = type === 'peony' || type === 'ring' ? 80 : 96;
+    const grav = type === 'willow' ? 230 : 70;
+    for (let i = 0; i < n; i++){
+      const [tx, ty] = showShape(type, i, n, bi);
+      const e = k => 1 - Math.pow(1 - clamp(k * 1.12), 3);
+      const x = cx + tx * R * e(u), y = cy + ty * R * e(u) + grav * u * u;
+      const u2 = Math.max(0, u - 0.06);
+      const x2 = cx + tx * R * e(u2), y2 = cy + ty * R * e(u2) + grav * u2 * u2;
+      let col = (type === 'double' && i < n * 0.5) ? c2 : c1;
+      col = mix3(col, WHITE, 0.35 * hash(i + bi));
+      let fade = Math.max(0, 1 - Math.pow(u, type === 'willow' ? 1.1 : 1.6));
+      let fl = 0.65 + 0.35 * Math.sin(age * 38 + i * 7);
+      if (type === 'crackle' && u > 0.45) { fl = Math.sin(age * 90 + i * 13) > 0.2 ? 1.4 : 0; col = WHITE; }
+      ctx.globalAlpha = fade * 0.6; ctx.strokeStyle = `rgb(${col.map(Math.round)})`; ctx.lineWidth = type === 'willow' ? 2.8 : 2.2;
+      ctx.beginPath(); ctx.moveTo(x2, y2); ctx.lineTo(x, y); ctx.stroke();
+      glow(x, y, 10, fade * fl, col);
+    }
+    glow(cx, cy, 130 * Math.max(0, 1 - u * 4), Math.max(0, 1 - u * 4), c1);          // core flash
+    glow(cx, cy, 480, 0.30 * Math.exp(-age * 4.5), c1);                                // sky flash
+    sx += Math.sin(age * 70) * 3.5 * Math.exp(-age * 9); sy += Math.cos(age * 83) * 3.5 * Math.exp(-age * 9);
+  });
+  shake = [sx, sy];
+}
+const BAKED = [[100, 115], [222, 165], [1430, 175], [1330, 245]];
+function drawBakedPulse(t){
+  BAKED.forEach(([x, y], i) => {
+    const k = ss((t - 1.2) / 1.5);
+    glow(x, y, 130 + 25 * cyc(t, 3, i * .25), k * (0.3 + 0.25 * cyc(t, 3, i * .25 + .5)), i % 2 ? [190, 90, 255] : [255, 160, 50]);
+    for (let j = 0; j < 9; j++){
+      const ang = TAU * hash(i * 20 + j), r = 40 + 90 * hash(i * 31 + j);
+      glow(x + Math.cos(ang) * r, y + Math.sin(ang) * r, 15, k * Math.pow(cyc(t, 5, hash(i * 7 + j)), 6), [255, 220, 150]);
+    }
+  });
 }
 
-// 4) sparklers (two bright tips with radiating sparks)
+// ============ 3. FOUNTAINS, SPARKLERS ============
+function drawFountain(t, bx, by){
+  const L = 1.0, n = 160, m = 0.8 + 0.3 * cyc(t, 6, bx > 800 ? .3 : 0);
+  for (let i = 0; i < n; i++){
+    const age = mod(t - (i / n) * L, L);
+    const vx = (hash(i * 5 + bx + 1) - .5) * 300, vy = (540 + 420 * hash(i * 3 + bx)) * m;
+    const x = bx + vx * age * 0.55, y = by - vy * age + 680 * age * age * 0.62;
+    const a = (1 - age) * (0.55 + 0.45 * Math.sin(age * 30 + i));
+    glow(x, y, 8 + 5 * (1 - age), a, [255, 215, 140]);
+  }
+  glow(bx, by - 20, 70 + 14 * cyc(t, 25), 0.8, [255, 190, 90]);
+  glow(bx, by - 170, 110, 0.2 + 0.12 * cyc(t, 12), [255, 200, 110]);
+}
 function drawSparkler(t, sx, sy, seed){
-  const L = 0.5, n = 70;
+  const boost = 1 + 1.4 * Math.exp(-Math.pow(mod(t, 2.5) / 0.35, 2));
+  const L = 0.5, n = 90;
   for (let i = 0; i < n; i++){
     const age = mod(t - (i / n) * L * 2, L) / L;
-    const ang = TAU * hash(seed + i);
-    const sp = 90 + 130 * hash(seed + i + 50);
-    const x = sx + Math.cos(ang) * sp * age, y = sy + Math.sin(ang) * sp * age + 40 * age * age;
+    const ang = TAU * hash(seed + i), sp = (95 + 140 * hash(seed + i + 50)) * boost;
+    const x = sx + Math.cos(ang) * sp * age, y = sy + Math.sin(ang) * sp * age + 45 * age * age;
     const a = (1 - age) * (0.5 + 0.5 * Math.sin(age * 50 + i));
     ctx.globalAlpha = a * .8; ctx.strokeStyle = 'rgb(255,235,180)'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - Math.cos(ang) * 14 * (1 - age), y - Math.sin(ang) * 14 * (1 - age)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - Math.cos(ang) * 16 * (1 - age), y - Math.sin(ang) * 16 * (1 - age)); ctx.stroke();
     glow(x, y, 6, a, [255, 220, 140]);
   }
-  const fl = 0.75 + 0.25 * Math.sin(TAU * (25 * t / T + seed));
-  glow(sx, sy, 70 * fl, 0.9, [255, 200, 110]);
-  glow(sx, sy, 26 * fl, 1, [255, 255, 255]);
-  star4(sx, sy, 60 * fl, 0.9, '255,230,170');
+  const fl = (0.75 + 0.25 * Math.sin(TAU * (25 * t / T + seed))) * boost;
+  glow(sx, sy, 75 * fl, 0.9, [255, 200, 110]); glow(sx, sy, 28 * fl, 1, [255, 255, 255]);
+  star4(sx, sy, 62 * fl, 0.95, '255,230,170');
 }
 
-// 5) diyas: flickering flame + warm glow
+// ============ 4. DIYAS + RANGOLI ============
 const DIYAS = [[318, 1843, 1], [523, 1862, 1], [1033, 1862, 1], [1282, 1850, 1], [783, 1788, 1.5], [858, 1838, .9], [710, 1838, .9]];
 function drawDiyas(t){
+  const k = ss((t - 1.4) / 1.2);
   DIYAS.forEach(([x, y, s], i) => {
     const f = 0.7 + 0.3 * Math.sin(TAU * (7 * t / T + hash(i))) * Math.sin(TAU * (11 * t / T + hash(i + 4)));
     const sway = Math.sin(TAU * (5 * t / T + hash(i + 8))) * 2.5 * s;
-    glow(x, y, 85 * s * (0.9 + 0.2 * f), 0.5 * f, [255, 150, 50]);
-    ctx.save(); ctx.translate(x + sway, y); ctx.globalAlpha = 0.95;
+    glow(x, y, 95 * s * (0.9 + 0.2 * f), 0.55 * f * k, [255, 150, 50]);
+    ctx.save(); ctx.translate(x + sway, y); ctx.globalAlpha = 0.95 * k;
     const g = ctx.createRadialGradient(0, 4 * s, 0, 0, 0, 22 * s * f);
     g.addColorStop(0, 'rgba(255,255,230,1)'); g.addColorStop(.35, 'rgba(255,200,80,.95)'); g.addColorStop(1, 'rgba(255,100,20,0)');
-    ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(0, -2 * s, 9 * s, 20 * s * f, 0, 0, TAU); ctx.fill();
-    ctx.restore();
+    ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(0, -2 * s, 9 * s, 20 * s * f, 0, 0, TAU); ctx.fill(); ctx.restore();
+    // little rising sparks
+    for (let j = 0; j < 3; j++){ const a = mod(t / 1.5 + hash(i * 5 + j), 1);
+      glow(x + Math.sin(a * 9 + j) * 10 * s, y - 20 * s - a * 70, 4, (1 - a) * 0.8 * k, [255, 210, 120]); }
   });
+  // running lights along the rangoli
+  for (let j = 0; j < 9; j++){
+    const ph = mod(t * 1.2 - j * 0.11, 1);
+    glow(520 + j * 70, 1896 + Math.sin(j) * 4, 50, k * 0.35 * Math.pow(0.5 + 0.5 * Math.sin(TAU * ph), 3), j % 2 ? [255, 90, 170] : [255, 170, 60]);
+  }
 }
 
-// 6) twinkling gold stars + floating embers
+// ============ 5. SKY LANTERNS, STARS, EMBERS, TITLE GLINTS ============
+const LANT = [[70, 980, .7], [170, 860, 1], [290, 1000, .6], [1280, 940, .8], [1390, 840, 1.05], [1500, 990, .65], [1560, 800, .8], [120, 760, .6]];
+function drawLanterns(t){
+  LANT.forEach(([x0, y0, s], i) => {
+    const v = 36 + 22 * hash(i), y = y0 - v * (t - 1.5) * 1.0, x = x0 + Math.sin(TAU * (t / T * (1 + i % 2) + hash(i))) * 20;
+    const a = ss((t - 1.8) / 1.4) * ss((y - 120) / 160); if (a <= 0.01 || y > 1300) return;
+    const f = 0.8 + 0.2 * Math.sin(TAU * (9 * t / T + hash(i + 6)));
+    glow(x, y, 85 * s, 0.55 * f * a, [255, 140, 50]);
+    ctx.save(); ctx.translate(x, y); ctx.globalAlpha = a * 0.95;
+    const w1 = 15 * s, w2 = 24 * s, h = 36 * s, g = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
+    g.addColorStop(0, 'rgba(255,170,60,.9)'); g.addColorStop(.6, 'rgba(255,215,120,1)'); g.addColorStop(1, 'rgba(255,120,30,.9)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(-w1, -h / 2); ctx.lineTo(w1, -h / 2); ctx.lineTo(w2, h / 2); ctx.lineTo(-w2, h / 2); ctx.closePath(); ctx.fill();
+    ctx.restore(); glow(x, y + h * 0.3, 22 * s, a, [255, 245, 200]);
+  });
+}
 const STARS = [[127, 340, 16], [283, 440, 22], [104, 485, 14], [15, 555, 20], [140, 638, 18], [1526, 440, 14], [1370, 543, 22], [1548, 586, 16], [1513, 740, 18],
                [60, 230, 12], [1560, 260, 12], [420, 330, 10], [1190, 330, 10], [430, 700, 10], [1180, 560, 10]];
 function drawStars(t){
   STARS.forEach(([x, y, s], i) => {
-    const a = Math.pow(cyc(t, 2 + (i % 3), hash(i)), 1.5);
-    const sz = s * (1 + 1.3 * a);
-    star4(x, y, sz, 0.35 + 0.65 * a);
-    glow(x, y, sz * 1.3, 0.25 * a, [255, 200, 90]);
+    const a = Math.pow(cyc(t, 3 + (i % 4), hash(i)), 1.5), sz = s * (1 + 1.6 * a);
+    star4(x, y, sz, 0.35 + 0.65 * a); glow(x, y, sz * 1.4, 0.3 * a, [255, 200, 90]);
   });
 }
 function drawEmbers(t){
-  const n = 55;
-  for (let i = 0; i < n; i++){
-    const life = T / (1 + Math.floor(hash(i + 1) * 2));         // 10s or 5s: loops cleanly
-    const age = mod(t + hash(i + 2) * T, life) / life;
-    const x = hash(i + 3) * W + Math.sin(TAU * (age * 2 + hash(i))) * 30;
-    const y = 1900 - age * 1100 * (0.6 + 0.4 * hash(i + 4));
-    const a = Math.sin(Math.PI * age) * (0.3 + 0.5 * hash(i + 5));
-    glow(x, y, 5 + 5 * hash(i + 6), a, [255, 190, 90]);
+  for (let i = 0; i < 90; i++){
+    const life = T / (1 + Math.floor(hash(i + 1) * 3)), age = mod(t + hash(i + 2) * T, life) / life;
+    const x = hash(i + 3) * W + Math.sin(TAU * (age * 3 + hash(i))) * 35, y = 1930 - age * 1500 * (0.55 + 0.45 * hash(i + 4));
+    glow(x, y, 5 + 6 * hash(i + 6), Math.sin(Math.PI * age) * (0.35 + 0.55 * hash(i + 5)), [255, 190, 90]);
   }
 }
-
-// 7) shimmer sweeps over the logo and the "Diwali" title
-function sweep(t, box, tOff){
-  const [x0, y0, x1, y1] = box;
-  const p = mod(t / T * 1 + tOff, 1);                          // one pass per loop
-  const q = (p - .5) * 1.6;                                    // idle for part of the loop
-  if (p > 0.45) return;
-  const u = p / 0.45, cx = x0 + (x1 - x0 + 200) * u - 100, w = 90;
+function drawTitleFX(t){
+  const k = ss((t - 1.0) / 1.5);
+  // pulsing golden aura behind "Diwali"
+  const g = ctx.createRadialGradient(800, 455, 10, 800, 455, 480);
+  g.addColorStop(0, 'rgba(255,170,40,.32)'); g.addColorStop(1, 'rgba(255,170,40,0)');
+  ctx.fillStyle = g; ctx.globalAlpha = k * (0.55 + 0.45 * Math.sin(TAU * t * 0.4)); ctx.fillRect(320, -25, 960, 960);
+  // glints
+  for (let i = 0; i < 26; i++){
+    const per = 1.4, off = hash(i + 200) * per, c = Math.floor((t + off) / per), fr = mod(t + off, per) / per;
+    const x = 480 + 650 * hash(i * 13 + c * 7), y = 335 + 235 * hash(i * 17 + c * 11);
+    star4(x, y, 11 + 17 * hash(i + c), k * Math.pow(Math.sin(Math.PI * fr), 2) * .95);
+  }
+}
+function sweep(t, box, st, dur = 1.1){
+  const p = (t - st) / dur; if (p < 0 || p > 1) return;
+  const [x0, y0, x1, y1] = box, cx = lerp(x0 - 120, x1 + 120, p), w = 95;
   ctx.save(); ctx.beginPath(); ctx.rect(x0, y0, x1 - x0, y1 - y0); ctx.clip();
-  ctx.globalCompositeOperation = 'lighter';
   const g = ctx.createLinearGradient(cx - w, 0, cx + w, 0);
-  g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(.5, 'rgba(255,240,200,0.16)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = g; ctx.globalAlpha = 1;
-  ctx.setTransform(1, 0, -0.35, 1, 0.35 * (y0 + y1) / 2, 0);   // skew the band
-  ctx.fillRect(x0 - 200, y0, x1 - x0 + 400, y1 - y0);
-  ctx.restore();
+  g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(.5, 'rgba(255,240,200,0.3)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g; ctx.globalAlpha = 1; ctx.setTransform(1, 0, -0.35, 1, 0.35 * (y0 + y1) / 2, 0);
+  ctx.fillRect(x0 - 300, y0, x1 - x0 + 600, y1 - y0); ctx.restore();
 }
 
-// -------------- master render --------------
+// ============ master render ============
 function render(t){
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
-  ctx.clearRect(0, 0, W, H);
-  // gentle "breathing" push-in, seamless loop
-  const z = 1 + 0.018 * (0.5 - 0.5 * Math.cos(TAU * t / T));
-  ctx.translate(W / 2, H * 0.55); ctx.scale(z, z); ctx.translate(-W / 2, -H * 0.55);
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  shake = [0, 0]; drawShows.dry = true;
+  // camera: slow push-in + gentle breathing + burst shake (footer is re-drawn unzoomed at the end)
+  const z = 1 + 0.03 * ss(t / 14) + 0.004 * Math.sin(TAU * t / 5);
+  const sh = shakeAt(t);
+  ctx.translate(800 + sh[0], 900 + sh[1]); ctx.scale(z, z); ctx.translate(-800, -900);
   ctx.drawImage(base, 0, 0, W, H);
+  // lights-off -> lights-on
+  const d = t < 1 ? lerp(1, 0.55, t) : 0.55 * (1 - ss((t - 1) / 2.2));
+  const flick = (t > 1.2 && t < 2.6) ? 0.06 * Math.sin(t * 60) * Math.sin(t * 23) : 0;
+  ctx.fillStyle = `rgba(2,4,24,${clamp(d + flick)})`; ctx.fillRect(-100, -100, W + 200, H + 200);
   ctx.globalCompositeOperation = 'lighter';
-  drawStars(t); drawBakedPulse(t); drawBursts(t);
-  drawHouseLights(t);
+  drawStars(t); drawBakedPulse(t); drawTitleFX(t);
+  drawLanterns(t); drawShows(t); drawHouseLights(t);
   drawFountain(t, 98, 1640); drawFountain(t, 1520, 1640);
-  drawDiyas(t);
-  drawSparkler(t, 838, 1610, 11); drawSparkler(t, 935, 1580, 77);
+  drawDiyas(t); drawSparkler(t, 838, 1610, 11); drawSparkler(t, 935, 1580, 77);
   drawEmbers(t);
-  sweep(t, [470, 330, 1135, 575], 0.0);   // "Diwali"
-  sweep(t, [740, 30, 870, 165], 0.5);     // logo mark
-  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  ctx.globalCompositeOperation = 'source-over';
+  [3.4, 8.2, 12.6].forEach(s => sweep(t, [470, 330, 1135, 575], s));
+  [4.6, 9.4, 13.4].forEach(s => sweep(t, [740, 30, 870, 165], s, 0.9));
+  // fixed footer
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 1910, W, H - 1910); ctx.clip(); ctx.drawImage(base, 0, 0, W, H); ctx.restore();
+  // fade in / out
+  const out = ss((t - 14.4) / 0.6), inn = t < 0.5 ? 1 - ss(t / 0.5) : 0;
+  const fadeA = Math.max(out, inn); if (fadeA > 0){ ctx.fillStyle = `rgba(0,0,0,${fadeA})`; ctx.fillRect(0, 0, W, H); }
+}
+function shakeAt(t){
+  let x = 0, y = 0;
+  SHOWS.forEach(([st]) => { const a = t - st; if (a > 0 && a < 1){ x += Math.sin(a * 70) * 3.5 * Math.exp(-a * 9); y += Math.cos(a * 83) * 3.5 * Math.exp(-a * 9); } });
+  return [x, y];
 }
 window.render = render; window.T = T;
 Promise.all([
   new Promise(r => { base = new Image(); base.onload = r; base.src = 'poster.jpg'; }),
   fetch('lights.json').then(r => r.json()).then(j => lights = j)
-]).then(() => { ready = true; window.ready = true; render(0);
+]).then(() => { window.ready = true; render(4);
   if (!window.__capture){ const t0 = performance.now(); (function loop(){ render(((performance.now() - t0) / 1000) % T); requestAnimationFrame(loop); })(); } });
 </script></body></html>
