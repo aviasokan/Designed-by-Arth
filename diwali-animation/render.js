@@ -12,9 +12,10 @@ const WORKERS = Math.max(1, Math.min(os.cpus().length, 6));
 (async () => {
   const srv = http.createServer((q, r) => { try { const f = path.join(dir, decodeURIComponent(q.url.split('?')[0]).replace(/^\//, '') || 'index.html');
     r.end(fs.readFileSync(fs.statSync(f).isFile() ? f : path.join(dir, 'index.html'))); } catch (e) { r.statusCode = 404; r.end(); } }).listen(0);
-  const url = `http://localhost:${srv.address().port}/index.html`;
+  const F916 = args.includes('--916'), CH = F916 ? 2844 : 2000;
+  const url = `http://localhost:${srv.address().port}/index.html${F916 ? '?fmt=916' : ''}`;
   const browser = await chromium.launch();
-  const open = async () => { const p = await browser.newPage({ viewport: { width: 1600, height: 2000 }, deviceScaleFactor: OUT_W / 1600 });
+  const open = async () => { const p = await browser.newPage({ viewport: { width: 1600, height: CH }, deviceScaleFactor: OUT_W / 1600 });
     await p.addInitScript(() => { window.__capture = true; }); await p.goto(url); await p.waitForFunction('window.ready'); return p; };
   if (at) {
     const p = await open();
@@ -31,6 +32,6 @@ const WORKERS = Math.max(1, Math.min(os.cpus().length, 6));
   }));
   await browser.close(); srv.close();
   const r = spawnSync('ffmpeg', ['-y', '-v', 'error', '-framerate', String(FPS), '-i', path.join(fdir, '%04d.png'), '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
-    '-crf', '16', '-preset', 'slow', '-movflags', '+faststart', '-vf', 'scale=1080:1350:flags=lanczos', out], { stdio: 'inherit' });
+    '-crf', '16', '-preset', 'slow', '-movflags', '+faststart', '-vf', `scale=1080:${F916 ? 1920 : 1350}:flags=lanczos`, out], { stdio: 'inherit' });
   fs.rmSync(fdir, { recursive: true, force: true }); process.exit(r.status);
 })();

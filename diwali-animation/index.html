@@ -4,8 +4,11 @@
 <body><canvas id="c" width="1600" height="2000"></canvas>
 <script>
 // Everything is a pure function of time t (seconds) so frames can be rendered deterministically.
-const T = 15, W = 1600, H = 2000, TAU = Math.PI * 2;
-const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const T = 15, W = 1600, TAU = Math.PI * 2;
+const F916 = new URLSearchParams(location.search).get('fmt') === '916';     // 9:16 Stories layout
+const OY = F916 ? 372 : 0;                                                   // poster is placed OY px down on the taller canvas
+const H = F916 ? 2844 : 2000, PH = 2000;                                     // canvas height / poster height
+const cv = document.getElementById('c'); cv.height = H; const ctx = cv.getContext('2d');
 function hash(n){ n = Math.sin(n * 127.1 + 311.7) * 43758.5453; return n - Math.floor(n); }
 const mod = (a, b) => ((a % b) + b) % b;
 const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
@@ -99,6 +102,17 @@ const SHOWS = [
   [13.3, 1480, 320, 130, 'crackle', [255, 240, 180]],
   [13.6, 140, 350, 130, 'peony',  [120, 255, 170]],
 ];
+if (F916) SHOWS.push(
+  [1.9, 800, -170, 190, 'peony',  [255, 190, 80], null, 1],
+  [4.2, 380, -150, 150, 'ring',   [255, 110, 190]],
+  [5.2, 1230, -190, 150, 'double',[120, 210, 255], [255, 240, 160]],
+  [7.0, 800, -150, 175, 'heart',  [255, 80, 120], null, 1],
+  [9.0, 1260, -120, 140, 'willow',[255, 200, 90]],
+  [10.0, 330, -210, 140, 'crackle',[255, 235, 170]],
+  [11.4, 800, -190, 200, 'ring',  [190, 130, 255], null, 1],
+  [12.7, 1200, -230, 150, 'peony',[255, 120, 80]],
+  [13.0, 420, -120, 150, 'double',[110, 255, 190], [255, 210, 90]],
+  [13.7, 800, -200, 210, 'peony', [255, 200, 90], null, 1]);
 const RK = 0.85;                                   // rocket flight time before the burst
 function showShape(type, i, n, bi){
   const h = hash(bi * 100 + i), a = TAU * i / n + hash(bi * 7 + i) * 0.25;
@@ -113,11 +127,11 @@ function showShape(type, i, n, bi){
 let shake = [0, 0];
 function drawShows(t){
   let sx = 0, sy = 0;
-  SHOWS.forEach(([st, cx, cy, R, type, c1, c2], bi) => {
+  SHOWS.forEach(([st, cx, cy, R, type, c1, c2, noRocket], bi) => {
     // --- rocket
     const rp = (t - (st - RK)) / RK;
-    if (rp > 0 && rp < 1.02){
-      const lx = cx + (hash(bi + 50) - .5) * 70, ly = Math.min(cy + 430, 1060);
+    if (rp > 0 && rp < 1.02 && !noRocket){
+      const lx = cx + (hash(bi + 50) - .5) * 70, ly = cy < 0 ? 330 : Math.min(cy + 430, 1060);
       const pos = p => { const e = 1 - Math.pow(1 - clamp(p), 2); return [lerp(lx, cx, e) + Math.sin(p * 22) * 7 * (1 - p), lerp(ly, cy, e)]; };
       for (let k = 0; k < 16; k++){
         const [x, y] = pos(rp - k * 0.03); const fa = (1 - k / 16);
@@ -221,7 +235,7 @@ const LANT = [[70, 980, .7], [170, 860, 1], [290, 1000, .6], [1280, 940, .8], [1
 function drawLanterns(t){
   LANT.forEach(([x0, y0, s], i) => {
     const v = 36 + 22 * hash(i), y = y0 - v * (t - 1.5) * 1.0, x = x0 + Math.sin(TAU * (t / T * (1 + i % 2) + hash(i))) * 20;
-    const a = ss((t - 1.8) / 1.4) * ss((y - 120) / 160); if (a <= 0.01 || y > 1300) return;
+    const a = ss((t - 1.8) / 1.4) * ss((y - 120 + OY * 0.95) / 160); if (a <= 0.01 || y > 1300) return;
     const f = 0.8 + 0.2 * Math.sin(TAU * (9 * t / T + hash(i + 6)));
     glow(x, y, 85 * s, 0.55 * f * a, [255, 140, 50]);
     ctx.save(); ctx.translate(x, y); ctx.globalAlpha = a * 0.95;
@@ -233,16 +247,21 @@ function drawLanterns(t){
 }
 const STARS = [[127, 340, 16], [283, 440, 22], [104, 485, 14], [15, 555, 20], [140, 638, 18], [1526, 440, 14], [1370, 543, 22], [1548, 586, 16], [1513, 740, 18],
                [60, 230, 12], [1560, 260, 12], [420, 330, 10], [1190, 330, 10], [430, 700, 10], [1180, 560, 10]];
+const STARS_X = [];
+for (let i = 0; i < 16; i++) STARS_X.push([60 + 1480 * hash(i + 400), -330 + 300 * hash(i + 450), 9 + 12 * hash(i + 500)]);
+for (let i = 0; i < 14; i++) STARS_X.push([60 + 1480 * hash(i + 600), 2060 + 380 * hash(i + 650), 9 + 12 * hash(i + 700)]);
 function drawStars(t){
+  if (F916) STARS_X.forEach(([x, y, s], i) => { const a = Math.pow(cyc(t, 3 + (i % 4), hash(i + 7)), 1.5), sz = s * (1 + 1.6 * a);
+    star4(x, y, sz, 0.35 + 0.65 * a); glow(x, y, sz * 1.4, 0.3 * a, [255, 200, 90]); });
   STARS.forEach(([x, y, s], i) => {
     const a = Math.pow(cyc(t, 3 + (i % 4), hash(i)), 1.5), sz = s * (1 + 1.6 * a);
     star4(x, y, sz, 0.35 + 0.65 * a); glow(x, y, sz * 1.4, 0.3 * a, [255, 200, 90]);
   });
 }
 function drawEmbers(t){
-  for (let i = 0; i < 90; i++){
+  for (let i = 0; i < (F916 ? 150 : 90); i++){
     const life = T / (1 + Math.floor(hash(i + 1) * 3)), age = mod(t + hash(i + 2) * T, life) / life;
-    const x = hash(i + 3) * W + Math.sin(TAU * (age * 3 + hash(i))) * 35, y = 1930 - age * 1500 * (0.55 + 0.45 * hash(i + 4));
+    const x = hash(i + 3) * W + Math.sin(TAU * (age * 3 + hash(i))) * 35, y = (F916 ? 2470 : 1930) - age * (F916 ? 2800 : 1500) * (0.55 + 0.45 * hash(i + 4));
     glow(x, y, 5 + 6 * hash(i + 6), Math.sin(Math.PI * age) * (0.35 + 0.55 * hash(i + 5)), [255, 190, 90]);
   }
 }
@@ -265,7 +284,7 @@ function sweep(t, box, st, dur = 1.1){
   ctx.save(); ctx.beginPath(); ctx.rect(x0, y0, x1 - x0, y1 - y0); ctx.clip();
   const g = ctx.createLinearGradient(cx - w, 0, cx + w, 0);
   g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(.5, 'rgba(255,240,200,0.3)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = g; ctx.globalAlpha = 1; ctx.setTransform(1, 0, -0.35, 1, 0.35 * (y0 + y1) / 2, 0);
+  ctx.fillStyle = g; ctx.globalAlpha = 1; ctx.setTransform(1, 0, -0.35, 1, 0.35 * (y0 + y1) / 2, OY);
   ctx.fillRect(x0 - 300, y0, x1 - x0 + 600, y1 - y0); ctx.restore();
 }
 
@@ -277,12 +296,13 @@ function render(t){
   // camera: slow push-in + gentle breathing + burst shake (footer is re-drawn unzoomed at the end)
   const z = 1 + 0.03 * ss(t / 14) + 0.004 * Math.sin(TAU * t / 5);
   const sh = shakeAt(t);
-  ctx.translate(800 + sh[0], 900 + sh[1]); ctx.scale(z, z); ctx.translate(-800, -900);
+  ctx.translate(800 + sh[0], 900 + OY + sh[1]); ctx.scale(z, z); ctx.translate(-800, -900 - OY);
   ctx.drawImage(base, 0, 0, W, H);
+  ctx.translate(0, OY);                      // from here on: poster coordinates
   // lights-off -> lights-on
   const d = t < 1 ? lerp(1, 0.55, t) : 0.55 * (1 - ss((t - 1) / 2.2));
   const flick = (t > 1.2 && t < 2.6) ? 0.06 * Math.sin(t * 60) * Math.sin(t * 23) : 0;
-  ctx.fillStyle = `rgba(2,4,24,${clamp(d + flick)})`; ctx.fillRect(-100, -100, W + 200, H + 200);
+  ctx.fillStyle = `rgba(2,4,24,${clamp(d + flick)})`; ctx.fillRect(-200, -OY - 600, W + 400, H + 1200);
   ctx.globalCompositeOperation = 'lighter';
   drawStars(t); drawBakedPulse(t); drawTitleFX(t);
   drawLanterns(t); drawShows(t); drawHouseLights(t);
@@ -294,7 +314,7 @@ function render(t){
   [4.6, 9.4, 13.4].forEach(s => sweep(t, [740, 30, 870, 165], s, 0.9));
   // fixed footer
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
-  ctx.save(); ctx.beginPath(); ctx.rect(0, 1910, W, H - 1910); ctx.clip(); ctx.drawImage(base, 0, 0, W, H); ctx.restore();
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 1910 + OY, W, H - 1910 - OY); ctx.clip(); ctx.drawImage(base, 0, 0, W, H); ctx.restore();
   // fade in / out
   const out = ss((t - 14.4) / 0.6), inn = t < 0.5 ? 1 - ss(t / 0.5) : 0;
   const fadeA = Math.max(out, inn); if (fadeA > 0){ ctx.fillStyle = `rgba(0,0,0,${fadeA})`; ctx.fillRect(0, 0, W, H); }
@@ -306,7 +326,7 @@ function shakeAt(t){
 }
 window.render = render; window.T = T;
 Promise.all([
-  new Promise(r => { base = new Image(); base.onload = r; base.src = 'poster.jpg'; }),
+  new Promise(r => { base = new Image(); base.onload = r; base.src = F916 ? 'poster916.jpg' : 'poster.jpg'; }),
   fetch('lights.json').then(r => r.json()).then(j => lights = j)
 ]).then(() => { window.ready = true; render(4);
   if (!window.__capture){ const t0 = performance.now(); (function loop(){ render(((performance.now() - t0) / 1000) % T); requestAnimationFrame(loop); })(); } });
