@@ -4,7 +4,7 @@
 const { chromium } = require('playwright');
 const { spawnSync } = require('child_process');
 const http = require('http'), fs = require('fs'), path = require('path'), os = require('os');
-const dir = __dirname, FPS = 30, T = 15, OUT_W = 1080;
+const dir = __dirname, FPS = 30, T = 16, OUT_W = 1080;
 const args = process.argv.slice(2), out = args[0] || path.join(dir, 'diwali-animation.mp4');
 const at = args.includes('--at') ? args[args.indexOf('--at') + 1].split(',').map(Number) : null;
 const WORKERS = Math.max(1, Math.min(os.cpus().length, 6));
